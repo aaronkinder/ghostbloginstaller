@@ -1,19 +1,45 @@
 #!/bin/bash
 # ghost-install.sh
 # https://tomssl.com/the-best-way-to-install-ghost-on-your-server
-# Updated for Ubuntu 24.04 and to fix directory creation and sudo permission issues
+# Updated for Ubuntu 24.04 and to fix directory creation, sudo permission issues, and syntax errors
 # curl -L -s https://raw.githubusercontent.com/aaronkinder/ghostbloginstaller/main/ghost-install.sh | sudo -E bash
 
 export NCURSES_NO_UTF8_ACS=1
 
 function ensure_package_installed() {
-    # Function implementation remains the same
-    # ...
+    # $1 is package name, $2 Package description, $3 Start Percentage, $4 End Percentage
+    # $5 Exit Code # 0 means package was already installed, 1 means this function installed it.
+    local __resultvar=$5
+    local myresult='0'
+    if dpkg-query -W -f='${Status}' $1 2>/dev/null | grep -q "ok installed"; then
+        if [ ! -t 1 ]; then
+            echo "XXX"
+            echo $4
+        fi
+        echo "$2 ($1) is already installed"
+        if [ ! -t 1 ]; then echo "XXX"; fi
+    else
+        if [ ! -t 1 ]; then
+            echo "XXX"
+            echo $3
+        fi
+        echo Installing $2...
+        if [ ! -t 1 ]; then echo "XXX"; fi
+        sudo apt-get install -y $1 &>/dev/null || exit 1
+        echo $4
+        local myresult=1
+    fi
+    eval $__resultvar="'$myresult'" # 0 = package was already installed. 1 = package installed in here.
 }
 
 function input_box() {
-    # Function implementation remains the same
-    # ...
+    # $1 is Title, $2 Prompt, $3 Default Value, $4 VARIABLE
+    declare -n result=$4
+    declare -n result_code=$4_EXITCODE
+    set +e
+    result=$(dialog --stdout --title "$1" --inputbox "$2" 0 0 "$3")
+    result_code=$?
+    set -e
 }
 
 if [[ $EUID -ne 0 ]]; then
@@ -75,10 +101,31 @@ fi
     echo "Permissions modified"
     echo "XXX"
     sleep 0.5
-    
-    # Rest of the installation process remains the same
-    # ...
-
+    ensure_package_installed "nginx" "Nginx" "10" "15" result
+    ensure_package_installed "ufw" "ufw [Firewall]" "16" "20" result
+    echo "XXX"
+    echo 21
+    echo "Configuring ufw..."
+    echo "XXX"
+    sudo ufw default deny incoming >/dev/null &&
+        sudo ufw default allow outgoing >/dev/null &&
+        sudo ufw allow ssh >/dev/null &&
+        sudo ufw allow 'Nginx Full' >/dev/null
+    yes | sudo ufw enable >/dev/null || exit 1
+    echo "XXX"
+    echo 30
+    echo "XXX"
+    ensure_package_installed "mysql-server" "MySQL" "31" "40" result
+    if [ $result -eq 1 ]; then
+        # We just installed mysql-server, so we should set the root password
+        data="something"
+        until [ "$data" = "$data2" ]; do
+            data=$(dialog --title "Set MySQL root password" --insecure --passwordbox "Please enter a password for the mysql root user. You will need this password when you install each of your Ghost blogs." 10 60 3>&1- 1>&2- 2>&3-)
+            data2=$(dialog --title "Set MySQL root password" --insecure --passwordbox "Please re-enter your password." 10 60 3>&1- 1>&2- 2>&3-)
+        done
+        sql="ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '$data';FLUSH PRIVILEGES;"
+        sudo mysql -u root -e "$sql" >/dev/null
+    fi
 ) | dialog --title "Installing Ghost..." --gauge "Installing required packages..." 10 60 0
 
 (
